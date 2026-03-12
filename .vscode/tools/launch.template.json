@@ -13,19 +13,131 @@
             "console": "integratedTerminal",
         },
         {
-            "name": "Python: Train Template-Factory-Sim-H1-Direct-v0 with rsl_rl (PPO)",
+            "name": "Python: Train Template-H1-Policy-Direct-v0 with skrl (AMP)",
             "type": "debugpy",
             "request": "launch",
-            "args" : ["--task", "Template-Factory-Sim-H1-Direct-v0", "--num_envs", "4096", "--headless"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/train.py",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
             "console": "integratedTerminal",
         },
         {
-            "name": "Python: Play Template-Factory-Sim-H1-Direct-v0 with rsl_rl (PPO)",
+            "name": "Python: Play Template-H1-Policy-Direct-v0 with skrl (AMP)",
             "type": "debugpy",
             "request": "launch",
-            "args" : ["--task", "Template-Factory-Sim-H1-Direct-v0", "--num_envs", "32"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Marl-Direct-v0 with skrl (AMP)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Marl-Direct-v0 with skrl (AMP)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Marl-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Marl-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Marl-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Marl-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Train Template-H1-Policy-Marl-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: Play Template-H1-Policy-Marl-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
             "console": "integratedTerminal",
         },
         // For script execution inside a Docker
@@ -40,22 +152,176 @@
             }
         },
         {
-            "name": "Docker: Train Template-Factory-Sim-H1-Direct-v0 with rsl_rl (PPO)",
+            "name": "Docker: Train Template-H1-Policy-Direct-v0 with skrl (AMP)",
             "type": "debugpy",
             "request": "launch",
-            "args" : ["--task", "Template-Factory-Sim-H1-Direct-v0", "--num_envs", "4096", "--headless"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/train.py",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
             "console": "integratedTerminal",
             "env": {
                 "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
             },
         },
         {
-            "name": "Docker: Play Template-Factory-Sim-H1-Direct-v0 with rsl_rl (PPO)",
+            "name": "Docker: Play Template-H1-Policy-Direct-v0 with skrl (AMP)",
             "type": "debugpy",
             "request": "launch",
-            "args" : ["--task", "Template-Factory-Sim-H1-Direct-v0", "--num_envs", "32"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Direct-v0", "--num_envs", "32", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Marl-Direct-v0 with skrl (AMP)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Marl-Direct-v0 with skrl (AMP)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "AMP"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Marl-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Marl-Direct-v0 with skrl (IPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "IPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Marl-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Marl-Direct-v0 with skrl (MAPPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "MAPPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Train Template-H1-Policy-Marl-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "4096", "--headless", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/train.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Docker: Play Template-H1-Policy-Marl-Direct-v0 with skrl (PPO)",
+            "type": "debugpy",
+            "request": "launch",
+            "args" : ["--task", "Template-H1-Policy-Marl-Direct-v0", "--num_envs", "32", "--algorithm", "PPO"],
+            "program": "${workspaceFolder}/scripts/skrl/play.py",
             "console": "integratedTerminal",
             "env": {
                 "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
