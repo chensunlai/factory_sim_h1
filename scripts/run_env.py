@@ -591,13 +591,12 @@ def main():
     env_cfg.commands.base_velocity.heading_command = False
     env_cfg.commands.base_velocity.rel_standing_envs = 0.0
     env_cfg.commands.base_velocity.resampling_time_range = (1.0e6, 1.0e6)
-    # Disable automatic episode resets and random respawn.
+    # Keep IsaacLab base-contact termination for built-in auto reset on fall.
+    # Disable time-out and random respawn drift for a stable single-robot setup.
     env_cfg.episode_length_s = 1.0e9
     if getattr(env_cfg, "terminations", None) is not None:
         if hasattr(env_cfg.terminations, "time_out"):
             env_cfg.terminations.time_out = None
-        if hasattr(env_cfg.terminations, "base_contact"):
-            env_cfg.terminations.base_contact = None
     if getattr(env_cfg, "events", None) is not None and getattr(env_cfg.events, "reset_base", None) is not None:
         env_cfg.events.reset_base.params = {
             "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
