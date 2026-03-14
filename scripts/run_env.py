@@ -24,6 +24,7 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import io
+import json
 import math
 import os
 import threading
@@ -54,6 +55,7 @@ LIDAR_PARENT_PRIM = "/World/envs/env_0/Robot/torso_link"
 # Fixed ROS2 endpoints
 CMD_VEL_TOPIC = "/cmd_vel"
 CMD_VEL_TIMEOUT_S = 0.5
+ENV_CTRL_TOPIC = "/isaacsim/env_ctrl"
 CAMERA_TOPIC = "/isaacsim/camera_torso"
 CAMERA_FRAME = "camera_torso_frame"
 LIDAR_TOPIC = "/isaacsim/lidar"
@@ -97,8 +99,12 @@ class CmdVelSubscriber:
         if self._owns_context:
             rclpy.init(args=None)
 
-        self._node = rclpy.create_node("h1_cmd_vel_listener")
+        self._node = rclpy.create_node("h1_ros_bridge_listener")
         self._sub = self._node.create_subscription(Twist, topic, self._callback, 10)
+        from std_msgs.msg import String
+
+        self._env_sub = self._node.create_subscription(String, ENV_CTRL_TOPIC, self._env_ctrl_callback, 10)
+        self._env_cmd_queue = []
 
         self._tf_msg_type = None
         self._tf_array_msg_type = None
@@ -138,6 +144,49 @@ class CmdVelSubscriber:
             self._cmd = (float(msg.linear.x), float(msg.linear.y), float(msg.angular.z))
             self._stamp = time.monotonic()
 
+    @staticmethod
+    def _normalize_json_text(text: str) -> str:
+        return (
+            text.replace("“", '"')
+            .replace("”", '"')
+            .replace("‘", '"')
+            .replace("’", '"')
+            .replace("：", ":")
+            .replace("，", ",")
+            .replace("｛", "{")
+            .replace("｝", "}")
+        )
+
+    def _env_ctrl_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "")).strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(self._normalize_json_text(payload_raw))
+        except Exception as exc:
+            print(f"[WARN] {ENV_CTRL_TOPIC} invalid json: {exc}. payload={payload_raw!r}")
+            return
+
+        if not isinstance(payload, dict):
+            print(f"[WARN] {ENV_CTRL_TOPIC} payload must be object: {payload!r}")
+            return
+
+        cmd = payload.get("cmd")
+        if not isinstance(cmd, str) or not cmd.strip():
+            print(f"[WARN] {ENV_CTRL_TOPIC} missing valid cmd field: {payload!r}")
+            return
+
+        param = payload.get("param", {})
+        if not isinstance(param, dict):
+            print(f"[WARN] {ENV_CTRL_TOPIC} param must be object, got {type(param).__name__}. Use empty object.")
+            param = {}
+
+        with self._lock:
+            self._env_cmd_queue.append({"cmd": cmd.strip(), "param": param})
+            if len(self._env_cmd_queue) > 32:
+                self._env_cmd_queue = self._env_cmd_queue[-32:]
+
     def get(self) -> tuple[float, float, float]:
         with self._lock:
             cmd = self._cmd
@@ -145,6 +194,14 @@ class CmdVelSubscriber:
         if self._timeout_s > 0.0 and (time.monotonic() - stamp) > self._timeout_s:
             return (0.0, 0.0, 0.0)
         return cmd
+
+    def pop_env_commands(self):
+        with self._lock:
+            if not self._env_cmd_queue:
+                return []
+            queued = self._env_cmd_queue
+            self._env_cmd_queue = []
+        return queued
 
     def publish_transform(self, parent_frame: str, child_frame: str, translation_xyz, quat_wxyz):
         if (self._tf_broadcaster is None and self._tf_pub is None) or self._tf_msg_type is None:
@@ -184,6 +241,7 @@ class CmdVelSubscriber:
         if self._spin_thread.is_alive():
             self._spin_thread.join(timeout=1.0)
         self._node.destroy_subscription(self._sub)
+        self._node.destroy_subscription(self._env_sub)
         self._executor.remove_node(self._node)
         self._node.destroy_node()
         if self._owns_context and self._rclpy.ok():
@@ -350,6 +408,53 @@ def _quat_wxyz_from_rpy_deg(rotation_rpy_deg):
     return (qw / n, qx / n, qy / n, qz / n)
 
 
+def _quat_wxyz_from_yaw(yaw_rad: float):
+    half = 0.5 * float(yaw_rad)
+    return (math.cos(half), 0.0, 0.0, math.sin(half))
+
+
+def _yaw_from_quat_wxyz(quat_wxyz):
+    qw, qx, qy, qz = tuple(map(float, quat_wxyz))
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def _safe_float(value, default_value: float) -> float:
+    if value is None:
+        return float(default_value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default_value)
+
+
+def _reset_h1_to_pose(env: ManagerBasedRLEnv, robot, default_pose: dict, param: dict):
+    obs, _ = env.reset()
+
+    target_x = _safe_float(param.get("x"), default_pose["x"])
+    target_y = _safe_float(param.get("y"), default_pose["y"])
+    target_z = _safe_float(param.get("z"), default_pose["z"])
+    target_yaw = _safe_float(param.get("yaw"), default_pose["yaw"])
+
+    root_state = robot.data.default_root_state.clone()
+    root_state[0, 0] = target_x
+    root_state[0, 1] = target_y
+    root_state[0, 2] = target_z
+    qw, qx, qy, qz = _quat_wxyz_from_yaw(target_yaw)
+    root_state[0, 3] = qw
+    root_state[0, 4] = qx
+    root_state[0, 5] = qy
+    root_state[0, 6] = qz
+    root_state[0, 7:13] = 0.0
+    robot.write_root_state_to_sim(root_state[0:1], env_ids=[0])
+
+    print(
+        f"[INFO] reset_h1 applied: x={target_x:.3f}, y={target_y:.3f}, z={target_z:.3f}, yaw={target_yaw:.3f} rad"
+    )
+    return obs
+
+
 def _build_ros2_sensor_graph(camera_prim_path: str, lidar_prim_path: str, sim_step_hz: float):
     lidar_gate_step = _gate_step_from_target_hz(LIDAR_HZ, sim_step_hz)
     odom_gate_step = _gate_step_from_target_hz(ODOM_HZ, sim_step_hz)
@@ -457,7 +562,7 @@ def _validate_fixed_paths(stage):
 
 def main():
     print(
-        f"[INFO] run_env_simple active: checkpoint={args_cli.checkpoint}, device={args_cli.device}, "
+        f"[INFO] run_env active: checkpoint={args_cli.checkpoint}, device={args_cli.device}, "
         f"camera={args_cli.camera_width}x{args_cli.camera_height}@{args_cli.camera_hfov_deg}deg"
     )
 
@@ -484,16 +589,43 @@ def main():
     env_cfg.commands.base_velocity.heading_command = False
     env_cfg.commands.base_velocity.rel_standing_envs = 0.0
     env_cfg.commands.base_velocity.resampling_time_range = (1.0e6, 1.0e6)
+    # Disable automatic episode resets and random respawn.
+    env_cfg.episode_length_s = 1.0e9
+    if getattr(env_cfg, "terminations", None) is not None:
+        if hasattr(env_cfg.terminations, "time_out"):
+            env_cfg.terminations.time_out = None
+        if hasattr(env_cfg.terminations, "base_contact"):
+            env_cfg.terminations.base_contact = None
+    if getattr(env_cfg, "events", None) is not None and getattr(env_cfg.events, "reset_base", None) is not None:
+        env_cfg.events.reset_base.params = {
+            "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
+            "velocity_range": {
+                "x": (0.0, 0.0),
+                "y": (0.0, 0.0),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (0.0, 0.0),
+            },
+        }
 
     sim_step_hz = 1.0 / (float(env_cfg.sim.dt) * float(env_cfg.decimation))
 
     env = ManagerBasedRLEnv(cfg=env_cfg)
+    robot = env.unwrapped.scene["robot"]
     command_term = env.command_manager.get_term("base_velocity")
     cmd_vel_sub = CmdVelSubscriber(CMD_VEL_TOPIC, CMD_VEL_TIMEOUT_S)
 
     _enable_ros2_sensor_extensions()
 
     obs, _ = env.reset()
+    default_root_state = robot.data.default_root_state[0].clone()
+    default_pose = {
+        "x": float(default_root_state[0].item()),
+        "y": float(default_root_state[1].item()),
+        "z": float(default_root_state[2].item()),
+        "yaw": _yaw_from_quat_wxyz(default_root_state[3:7].tolist()),
+    }
     stage = omni.usd.get_context().get_stage()
     _validate_fixed_paths(stage)
 
@@ -508,9 +640,20 @@ def main():
         f"[INFO] Fixed paths: robot={ROBOT_ROOT}, base={ODOM_CHASSIS_PRIM}, "
         f"camera_parent={CAMERA_PARENT_PRIM}, lidar_parent={LIDAR_PARENT_PRIM}"
     )
+    print(f"[INFO] Env control topic enabled: {ENV_CTRL_TOPIC} (cmd=reset_h1)")
 
     with torch.inference_mode():
         while simulation_app.is_running():
+            for ctrl in cmd_vel_sub.pop_env_commands():
+                cmd = ctrl.get("cmd")
+                param = ctrl.get("param", {})
+                if cmd == "reset_h1":
+                    if not isinstance(param, dict):
+                        param = {}
+                    obs = _reset_h1_to_pose(env, robot, default_pose, param)
+                else:
+                    print(f"[WARN] Unknown env_ctrl cmd: {cmd!r}")
+
             _apply_cmd_vel(command_term, cmd_vel_sub.get())
             cmd_vel_sub.publish_transform(BASE_FRAME, LIDAR_FRAME, base_to_lidar_t, base_to_lidar_q)
             action = policy(obs["policy"])
