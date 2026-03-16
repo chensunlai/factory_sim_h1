@@ -75,6 +75,8 @@ tests/
 **/gelsight_r15_data/*
 
 # Ros package
-**/ros_interface/build
-**/ros_interface/install
-**/ros_interface/log
+**/ros_interface/*
+**/ros_interface/*
+**/ros_interface/*
+!**/ros_interface/src
+!**/ros_interface/launch
