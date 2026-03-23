@@ -580,7 +580,7 @@ def main():
     env_cfg.scene.terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="usd",
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/warehouse.usd",
+        usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd",
     )
     env_cfg.sim.device = args_cli.device
     env_cfg.sim.physx.enable_ccd = True
