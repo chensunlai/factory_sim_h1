@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(description="Minimal H1 runner (fixed scene/rob
 parser.add_argument("--checkpoint", type=str, default="weight/policy.pt", help="Path to jit policy checkpoint.")
 parser.add_argument("--camera_width", type=int, default=1600, help="Camera width in pixels.")
 parser.add_argument("--camera_height", type=int, default=1200, help="Camera height in pixels.")
-parser.add_argument("--camera_hfov_deg", type=float, default=120.0, help="Camera horizontal FOV in degrees.")
+parser.add_argument("--camera_hfov_deg", type=float, default=100.0, help="Camera horizontal FOV in degrees.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 args_cli.device = "cuda:0"
@@ -57,6 +57,7 @@ CMD_VEL_TOPIC = "/cmd_vel"
 CMD_VEL_TIMEOUT_S = 0.5
 ENV_CTRL_TOPIC = "/isaacsim/env_ctrl"
 CAMERA_TOPIC = "/isaacsim/camera_torso"
+CAMERA_DEPTH_TOPIC = "/isaacsim/depth_torso"
 CAMERA_FRAME = "camera_torso_frame"
 LIDAR_TOPIC = "/isaacsim/lidar"
 # Lidar data are configured as WORLD coordinates and published with odom frame id.
@@ -477,6 +478,7 @@ def _build_ros2_sensor_graph(camera_prim_path: str, lidar_prim_path: str, sim_st
                 ("odom_gate", "isaacsim.core.nodes.IsaacSimulationGate"),
                 ("cam_rp", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
                 ("cam_pub", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                ("cam_depth_pub", "isaacsim.ros2.bridge.ROS2CameraHelper"),
                 ("lidar_rp", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
                 ("lidar_pub", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
                 ("odom_compute", "isaacsim.core.nodes.IsaacComputeOdometry"),
@@ -492,6 +494,9 @@ def _build_ros2_sensor_graph(camera_prim_path: str, lidar_prim_path: str, sim_st
                 ("cam_rp.outputs:execOut", "cam_pub.inputs:execIn"),
                 ("cam_rp.outputs:renderProductPath", "cam_pub.inputs:renderProductPath"),
                 ("ctx.outputs:context", "cam_pub.inputs:context"),
+                ("cam_rp.outputs:execOut", "cam_depth_pub.inputs:execIn"),
+                ("cam_rp.outputs:renderProductPath", "cam_depth_pub.inputs:renderProductPath"),
+                ("ctx.outputs:context", "cam_depth_pub.inputs:context"),
                 ("tick.outputs:tick", "lidar_gate.inputs:execIn"),
                 ("lidar_gate.outputs:execOut", "lidar_rp.inputs:execIn"),
                 ("lidar_rp.outputs:execOut", "lidar_pub.inputs:execIn"),
@@ -526,6 +531,13 @@ def _build_ros2_sensor_graph(camera_prim_path: str, lidar_prim_path: str, sim_st
                 ("cam_pub.inputs:frameSkipCount", 0),
                 ("cam_pub.inputs:queueSize", 10),
                 ("cam_pub.inputs:useSystemTime", True),
+                ("cam_depth_pub.inputs:type", "depth"),
+                ("cam_depth_pub.inputs:topicName", CAMERA_DEPTH_TOPIC),
+                ("cam_depth_pub.inputs:frameId", CAMERA_FRAME),
+                ("cam_depth_pub.inputs:enabled", True),
+                ("cam_depth_pub.inputs:frameSkipCount", 0),
+                ("cam_depth_pub.inputs:queueSize", 10),
+                ("cam_depth_pub.inputs:useSystemTime", True),
                 ("lidar_rp.inputs:cameraPrim", lidar_prim_path),
                 ("lidar_rp.inputs:enabled", True),
                 ("lidar_pub.inputs:type", "point_cloud"),
@@ -551,7 +563,8 @@ def _build_ros2_sensor_graph(camera_prim_path: str, lidar_prim_path: str, sim_st
     )
 
     print(
-        f"[INFO] ROS2 graph ready: camera={CAMERA_TOPIC}, lidar={LIDAR_TOPIC}, odom={ODOM_TOPIC}, "
+        f"[INFO] ROS2 graph ready: camera_rgb={CAMERA_TOPIC}, camera_depth={CAMERA_DEPTH_TOPIC}, "
+        f"lidar={LIDAR_TOPIC}, odom={ODOM_TOPIC}, "
         f"lidar_hz={LIDAR_HZ}, odom_hz={ODOM_HZ}"
     )
 
