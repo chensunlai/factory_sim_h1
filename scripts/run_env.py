@@ -37,6 +37,7 @@ import omni.kit.commands
 import omni.usd
 import torch
 
+import isaaclab.sim as sim_utils
 from pxr import Gf, Usd, UsdGeom
 
 from isaaclab.envs import ManagerBasedRLEnv
@@ -81,6 +82,15 @@ LIDAR_LOCAL_RPY_DEG = (0.0, 0.0, 0.0)
 LIDAR_HZ = 10.0
 ODOM_HZ = 50.0
 
+# USD_PATH = f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd"
+USD_PATH = "scene/hall_isaac_modified.usd"
+USD_PATH_Z_OFFSET_M = 2.3
+COLL_PATH = [
+    "/World/ground/terrain/HallMesh"
+]
+# Set to float value to enable extra static ground plane, or None to disable.
+GROUND_PLANE_Z = None
+GROUND_PLANE_SIZE_XY = 200.0
 
 class CmdVelSubscriber:
     """ROS2 /cmd_vel subscriber with background spinning."""
@@ -448,7 +458,8 @@ def _reset_h1_to_pose(env: ManagerBasedRLEnv, robot, default_pose: dict, param: 
     root_state[0, 5] = qy
     root_state[0, 6] = qz
     root_state[0, 7:13] = 0.0
-    robot.write_root_state_to_sim(root_state[0:1], env_ids=[0])
+    env0_ids = torch.tensor([0], device=root_state.device, dtype=torch.int64)
+    robot.write_root_state_to_sim(root_state[0:1], env_ids=env0_ids)
 
     print(
         f"[INFO] reset_h1 applied: x={target_x:.3f}, y={target_y:.3f}, z={target_z:.3f}, yaw={target_yaw:.3f} rad"
@@ -575,6 +586,112 @@ def _validate_fixed_paths(stage):
             raise RuntimeError(f"Required fixed prim path not found: {p}")
 
 
+def _enable_collision_for_prim(
+    stage,
+    prim_path: str,
+    recursive: bool = True,
+    approximation: str = "none",
+) -> int:
+    """Apply static collision APIs to mesh prim(s) under a specified prim path."""
+    from pxr import PhysxSchema, UsdPhysics
+
+    root = stage.GetPrimAtPath(str(prim_path))
+    if not root or not root.IsValid():
+        raise RuntimeError(f"Collision prim path not found: {prim_path}")
+
+    prim_iter = Usd.PrimRange(root) if recursive else [root]
+    mesh_count = 0
+    for prim in prim_iter:
+        if not prim.IsA(UsdGeom.Mesh):
+            continue
+
+        collision_api = UsdPhysics.CollisionAPI.Apply(prim)
+        if collision_api:
+            collision_api.CreateCollisionEnabledAttr(True)
+
+        mesh_collision_api = UsdPhysics.MeshCollisionAPI.Apply(prim)
+        if mesh_collision_api:
+            mesh_collision_api.CreateApproximationAttr(str(approximation))
+
+        PhysxSchema.PhysxCollisionAPI.Apply(prim)
+        mesh_count += 1
+
+    if mesh_count == 0:
+        raise RuntimeError(f"No mesh found under prim path: {prim_path}")
+
+    print(
+        f"[INFO] Collision enabled: prim={prim_path}, recursive={recursive}, "
+        f"meshes={mesh_count}, approximation={approximation}"
+    )
+    return mesh_count
+
+
+def _apply_prim_z_offset(stage, prim_path: str, z_offset_m: float):
+    """Apply a z-offset to an existing prim translation."""
+    if abs(float(z_offset_m)) <= 1.0e-9:
+        return
+
+    prim = stage.GetPrimAtPath(str(prim_path))
+    if not prim or not prim.IsValid():
+        prim = UsdGeom.Xform.Define(stage, str(prim_path)).GetPrim()
+
+    xformable = UsdGeom.Xformable(prim)
+    translate_op = None
+    for op in xformable.GetOrderedXformOps():
+        if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+            translate_op = op
+            break
+    if translate_op is None:
+        translate_op = xformable.AddTranslateOp(UsdGeom.XformOp.PrecisionDouble)
+
+    current_t = translate_op.Get()
+    if current_t is None:
+        current_t = Gf.Vec3d(0.0, 0.0, 0.0)
+    new_t = Gf.Vec3d(float(current_t[0]), float(current_t[1]), float(current_t[2]) + float(z_offset_m))
+    translate_op.Set(new_t)
+    print(f"[INFO] Applied z offset: prim={prim_path}, dz={float(z_offset_m):.3f} m")
+
+
+def _add_ground_plane(
+    stage,
+    prim_path: str = "/World/ground/plane",
+    z_height: float = 0.0,
+    size_xy: float = 200.0,
+) -> str:
+    """Create one static mesh ground plane and enable collision."""
+    from pxr import PhysxSchema, UsdPhysics
+
+    plane_prim = UsdGeom.Mesh.Define(stage, prim_path).GetPrim()
+    mesh = UsdGeom.Mesh(plane_prim)
+
+    half = float(size_xy) * 0.5
+    z = float(z_height)
+    mesh.CreatePointsAttr(
+        [
+            Gf.Vec3f(-half, -half, z),
+            Gf.Vec3f(half, -half, z),
+            Gf.Vec3f(half, half, z),
+            Gf.Vec3f(-half, half, z),
+        ]
+    )
+    mesh.CreateFaceVertexCountsAttr([4])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+    mesh.CreateSubdivisionSchemeAttr("none")
+    mesh.CreateDoubleSidedAttr(True)
+    UsdGeom.Imageable(plane_prim).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
+
+    collision_api = UsdPhysics.CollisionAPI.Apply(plane_prim)
+    if collision_api:
+        collision_api.CreateCollisionEnabledAttr(True)
+    mesh_collision_api = UsdPhysics.MeshCollisionAPI.Apply(plane_prim)
+    if mesh_collision_api:
+        mesh_collision_api.CreateApproximationAttr("none")
+    PhysxSchema.PhysxCollisionAPI.Apply(plane_prim)
+
+    print(f"[INFO] Ground plane added: prim={prim_path}, z={z}, size={size_xy}")
+    return prim_path
+
+
 def main():
     print(
         f"[INFO] run_env active: checkpoint={args_cli.checkpoint}, device={args_cli.device}, "
@@ -593,7 +710,13 @@ def main():
     env_cfg.scene.terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="usd",
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd",
+        usd_path=USD_PATH,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
     )
     env_cfg.sim.device = args_cli.device
     env_cfg.sim.physx.enable_ccd = True
@@ -610,20 +733,11 @@ def main():
     if getattr(env_cfg, "terminations", None) is not None:
         if hasattr(env_cfg.terminations, "time_out"):
             env_cfg.terminations.time_out = None
-    if getattr(env_cfg, "events", None) is not None and getattr(env_cfg.events, "reset_base", None) is not None:
-        env_cfg.events.reset_base.params = {
-            "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
-            "velocity_range": {
-                "x": (0.0, 0.0),
-                "y": (0.0, 0.0),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (0.0, 0.0),
-            },
-        }
 
     sim_step_hz = 1.0 / (float(env_cfg.sim.dt) * float(env_cfg.decimation))
+
+    stage = omni.usd.get_context().get_stage()
+    _apply_prim_z_offset(stage, "/World/ground", USD_PATH_Z_OFFSET_M)
 
     env = ManagerBasedRLEnv(cfg=env_cfg)
     robot = env.unwrapped.scene["robot"]
@@ -640,8 +754,11 @@ def main():
         "z": float(default_root_state[2].item()),
         "yaw": _yaw_from_quat_wxyz(default_root_state[3:7].tolist()),
     }
-    stage = omni.usd.get_context().get_stage()
     _validate_fixed_paths(stage)
+    if GROUND_PLANE_Z is not None:
+        _add_ground_plane(stage, z_height=GROUND_PLANE_Z, size_xy=GROUND_PLANE_SIZE_XY)
+    for P in COLL_PATH:
+        _enable_collision_for_prim(stage, P, recursive=True, approximation="none")
 
     camera_prim_path = _create_camera(stage)
     lidar_prim_path = _create_lidar(stage)
