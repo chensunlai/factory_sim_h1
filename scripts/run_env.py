@@ -83,7 +83,11 @@ LIDAR_HZ = 10.0
 ODOM_HZ = 50.0
 
 # USD_PATH = f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd"
-USD_PATH = "scene/hall_isaac_modified.usd"
+# USD_PATH = "scene/hall_isaac_modified.usd"
+# hall_isaac_modified.usd wraps hall.usd with an extra HallMesh transform of (-2, -1, -2.8).
+# With the +2.3 m parent offset below, its embedded plane ends up at z=-0.5 m, so the robot drops onto it.
+# hall_isaac_modified2.usd disables that embedded plane and adds a replacement that lands at z=0.0 m.
+USD_PATH = "scene/hall_isaac_modified2.usd"
 USD_PATH_Z_OFFSET_M = 2.3
 COLL_PATH = [
     "/World/ground/terrain/HallMesh"
@@ -695,8 +699,10 @@ def _add_ground_plane(
 def main():
     print(
         f"[INFO] run_env active: checkpoint={args_cli.checkpoint}, device={args_cli.device}, "
-        f"camera={args_cli.camera_width}x{args_cli.camera_height}@{args_cli.camera_hfov_deg}deg"
+        f"camera={args_cli.camera_width}x{args_cli.camera_height}@{args_cli.camera_hfov_deg}deg, "
+        f"scene={USD_PATH}, ground_dz={USD_PATH_Z_OFFSET_M:.3f}m"
     )
+    print(f"[INFO] Collision roots: {COLL_PATH}")
 
     policy_path = os.path.abspath(args_cli.checkpoint)
     file_content = omni.client.read_file(policy_path)[2]

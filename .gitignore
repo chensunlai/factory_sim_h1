@@ -67,6 +67,11 @@ _build
 # Tests
 tests/
 
+/node_modules/
+
+weight/
+scene/
+
 # Docker history
 .isaac-lab-docker-history
 
