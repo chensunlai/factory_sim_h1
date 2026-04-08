@@ -74,7 +74,7 @@ CAMERA_NEAR_CLIP = 0.01
 CAMERA_FAR_CLIP = 300.0
 
 LIDAR_CONFIG = "OS1_REV6_32ch10hz1024res"
-LIDAR_LOCAL_T = (0.05, 0.0, 0.22)
+LIDAR_LOCAL_T = (0.0, 0.0, 0.48)
 LIDAR_LOCAL_RPY_DEG = (0.0, 0.0, 0.0)
 
 # Fixed publication frequencies
