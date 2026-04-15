@@ -452,30 +452,56 @@ class RosMcpNode(Node):
             waypoint_topic=True,
         )
 
-    def cancel_navigation(self) -> bool:
+    def _cancel_current_task(
+        self,
+        *,
+        expected_task_id: str | None = None,
+        message: str = "Current task cancelled.",
+    ) -> tuple[bool, str | None]:
         with self.lock:
             pose = self.pose
             task = self.current_task
-            if task is not None:
-                task.status = "cancelled"
-                task.result = "cancelled"
-                task.message = "Navigation cancelled."
+            if task is None:
+                return False, None
+            if expected_task_id is not None and task.id != expected_task_id:
+                return False, task.id
+            task.status = "cancelled"
+            task.result = "cancelled"
+            task.message = message
+            task_id = task.id
         self.turn_cancel.set()
         self._manual_joy(0.0, 0.0)
         self._publish_goal(pose.x, pose.y, pose.z)
-        return task is not None
+        return True, task_id
 
-    def wait_navigation(self, timeout_sec: float) -> dict[str, Any]:
+    def cancel_navigation(self) -> bool:
+        cancelled, _ = self._cancel_current_task()
+        return cancelled
+
+    def wait_navigation(self, timeout_sec: float, stop_on_timeout: bool = False) -> dict[str, Any]:
         deadline = time.time() + timeout_sec
+        task_id: str | None = None
         while time.time() < deadline:
             with self.lock:
                 task = self.current_task
                 if task is None:
                     return {"status": "ended", "result": "no_active_task"}
+                task_id = task.id
                 if task.status in {"completed", "cancelled", "failed"}:
                     return {"status": "ended", "result": task.result or task.status, "task_id": task.id}
             time.sleep(0.1)
-        return {"status": "timeout"}
+        response: dict[str, Any] = {"status": "timeout"}
+        if task_id is not None:
+            response["task_id"] = task_id
+        if stop_on_timeout:
+            cancelled, _ = self._cancel_current_task(
+                expected_task_id=task_id,
+                message="Current task stopped after wait_navigation timeout.",
+            )
+            response["stopped"] = cancelled
+            if cancelled:
+                response["result"] = "cancelled"
+        return response
 
     def _turn_loop(self, target_yaw: float, relative: bool) -> None:
         with self.lock:
@@ -502,7 +528,7 @@ class RosMcpNode(Node):
             if active is None or active.id != task.id:
                 return
             error = _normalize_angle(target - yaw)
-            if abs(error) < math.radians(3.0):
+            if abs(error) < math.radians(5.0):
                 stable_hits += 1
                 self._manual_joy(0.0, 0.0)
                 if stable_hits >= 3:
@@ -822,9 +848,15 @@ def build_mcp_server(ros: RosMcpNode) -> FastMCP:
     def turn_absolute(yaw_deg: float) -> str:
         return _json_text(asdict(ros.start_turn(yaw_deg, relative=False)))
 
-    @server.tool(description="Wait for the current navigation or turn task to finish.")
-    def wait_navigation(timeout_sec: float = 30.0) -> str:
-        return _json_text(ros.wait_navigation(float(timeout_sec)))
+    @server.tool(
+        description=(
+            "Wait for the current navigation or turn task to finish. "
+            "A typical timeout is 10 seconds. "
+            "Set stop_on_timeout=true to automatically stop the task when the timeout expires."
+        )
+    )
+    def wait_navigation(timeout_sec: float = 30.0, stop_on_timeout: bool = False) -> str:
+        return _json_text(ros.wait_navigation(float(timeout_sec), bool(stop_on_timeout)))
 
     @server.tool(description="Cancel the current navigation or turn task.")
     def cancel_navigation() -> str:
