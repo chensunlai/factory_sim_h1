@@ -21,7 +21,7 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import PointStamped
 from mcp import types
 from mcp.server.fastmcp import FastMCP
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path as NavPath
 from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -82,6 +82,7 @@ DEPTH_SCALE_BY_ENCODING = {
     "64FC1": 1.0,
 }
 DEFAULT_DEPTH_SCALE = 1.0
+LOCAL_MAP_PLANNER_PATH_FRAME = "vehicle"
 
 
 def _yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
@@ -219,6 +220,10 @@ class RosMcpNode(Node):
         self.lock = threading.RLock()
         self.pose = PoseState()
         self.pose_history: list[tuple[float, float]] = []
+        self.latest_global_goal: dict[str, Any] | None = None
+        self.latest_planner_path: list[tuple[float, float, float]] = []
+        self.latest_planner_path_frame_id = ""
+        self.latest_short_term_target: dict[str, Any] | None = None
         self.latest_rgb_msg: Image | None = None
         self.latest_depth_msg: Image | None = None
         self.latest_cloud: np.ndarray | None = None
@@ -261,6 +266,9 @@ class RosMcpNode(Node):
         self.create_subscription(Odometry, pose_topic, self._pose_cb, 10)
         self.create_subscription(Bool, reach_goal_topic, self._reach_goal_cb, 10)
         self.create_subscription(PointCloud2, scan_topic, self._cloud_cb, qos_profile_sensor_data)
+        self.create_subscription(PointStamped, goal_topic, self._global_goal_cb, 10)
+        self.create_subscription(NavPath, "/path", self._path_cb, 10)
+        self.create_subscription(PointStamped, waypoint_topic, self._short_term_target_cb, 10)
         self.create_subscription(Image, rgb_topic, self._rgb_cb, qos_profile_sensor_data)
         self.create_subscription(Image, depth_topic, self._depth_cb, qos_profile_sensor_data)
 
@@ -308,6 +316,37 @@ class RosMcpNode(Node):
         arr = np.asarray(points, dtype=np.float32) if points else np.zeros((0, 3), dtype=np.float32)
         with self.lock:
             self.latest_cloud = arr
+
+    def _global_goal_cb(self, msg: PointStamped) -> None:
+        with self.lock:
+            self.latest_global_goal = {
+                "x": float(msg.point.x),
+                "y": float(msg.point.y),
+                "z": float(msg.point.z),
+                "frame_id": msg.header.frame_id or "",
+            }
+
+    def _path_cb(self, msg: NavPath) -> None:
+        points = [
+            (
+                float(entry.pose.position.x),
+                float(entry.pose.position.y),
+                float(entry.pose.position.z),
+            )
+            for entry in msg.poses
+        ]
+        with self.lock:
+            self.latest_planner_path = points
+            self.latest_planner_path_frame_id = msg.header.frame_id or ""
+
+    def _short_term_target_cb(self, msg: PointStamped) -> None:
+        with self.lock:
+            self.latest_short_term_target = {
+                "x": float(msg.point.x),
+                "y": float(msg.point.y),
+                "z": float(msg.point.z),
+                "frame_id": msg.header.frame_id or "",
+            }
 
     def _rgb_cb(self, msg: Image) -> None:
         with self.lock:
@@ -1021,6 +1060,12 @@ class RosMcpNode(Node):
             pose = asdict(self.pose)
             pose_public = _pose_record_from_state(self.pose)
             trajectory = list(self.pose_history)
+            global_goal = None if self.latest_global_goal is None else dict(self.latest_global_goal)
+            planner_path = list(self.latest_planner_path)
+            planner_path_frame_id = self.latest_planner_path_frame_id
+            short_term_target = (
+                None if self.latest_short_term_target is None else dict(self.latest_short_term_target)
+            )
             capture_dir = self.capture_dir
 
         if cloud is None:
@@ -1034,6 +1079,47 @@ class RosMcpNode(Node):
         yaw = pose["yaw"]
         cos_yaw = math.cos(-yaw)
         sin_yaw = math.sin(-yaw)
+        pose_frame_id = pose.get("frame_id") or NAVIGATION_FRAME
+
+        def to_local_xy(x: float, y: float, frame_id: str) -> tuple[float, float] | None:
+            if frame_id in {"", pose_frame_id, NAVIGATION_FRAME}:
+                rel_x = x - pose["x"]
+                rel_y = y - pose["y"]
+                return (
+                    cos_yaw * rel_x - sin_yaw * rel_y,
+                    sin_yaw * rel_x + cos_yaw * rel_y,
+                )
+            if frame_id == LOCAL_MAP_PLANNER_PATH_FRAME:
+                return float(x), float(y)
+            return None
+
+        def local_xy_to_pixel(local_x: float, local_y: float) -> tuple[int, int] | None:
+            if not (-half <= local_x <= half and -half <= local_y <= half):
+                return None
+            px = int(round((local_x + half) / size_m * (side_px - 1)))
+            py = int(round((half - local_y) / size_m * (side_px - 1)))
+            px = max(0, min(side_px - 1, px))
+            py = max(0, min(side_px - 1, py))
+            return px, py
+
+        def draw_labeled_marker(
+            pixel: tuple[int, int],
+            fill_color: tuple[int, int, int],
+            text: str,
+            text_color: tuple[int, int, int],
+        ) -> None:
+            cv2.circle(img, pixel, 7, fill_color, -1)
+            cv2.circle(img, pixel, 9, (0, 0, 0), 1)
+            cv2.putText(
+                img,
+                text,
+                (pixel[0] + 8, max(14, pixel[1] - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                text_color,
+                1,
+                cv2.LINE_AA,
+            )
 
         for meter in range(-int(half), int(half) + 1):
             offset = int(round((meter / size_m) * side_px))
@@ -1078,20 +1164,91 @@ class RosMcpNode(Node):
             local_y = local_y[mask]
             px = ((local_x + half) / size_m * (side_px - 1)).astype(np.int32)
             py = ((half - local_y) / size_m * (side_px - 1)).astype(np.int32)
-            img[py-1:py+1, px-1:px+1] = (30, 30, 30)
+            px = np.clip(px, 0, side_px - 1)
+            py = np.clip(py, 0, side_px - 1)
+            img[py, px] = (30, 30, 30)
 
         pts = []
         for tx, ty in trajectory[-500:]:
-            rel_x = tx - pose["x"]
-            rel_y = ty - pose["y"]
-            local_x = cos_yaw * rel_x - sin_yaw * rel_y
-            local_y = sin_yaw * rel_x + cos_yaw * rel_y
-            if -half <= local_x <= half and -half <= local_y <= half:
-                px = int(round((local_x + half) / size_m * (side_px - 1)))
-                py = int(round((half - local_y) / size_m * (side_px - 1)))
-                pts.append((px, py))
+            local_xy = to_local_xy(tx, ty, pose_frame_id)
+            if local_xy is None:
+                continue
+            pixel = local_xy_to_pixel(local_xy[0], local_xy[1])
+            if pixel is not None:
+                pts.append(pixel)
         if len(pts) >= 2:
             cv2.polylines(img, [np.array(pts, dtype=np.int32)], False, (255, 0, 0), 2)
+
+        planner_pts = []
+        for px_world, py_world, _ in planner_path:
+            local_xy = to_local_xy(px_world, py_world, planner_path_frame_id)
+            if local_xy is None:
+                continue
+            pixel = local_xy_to_pixel(local_xy[0], local_xy[1])
+            if pixel is not None:
+                planner_pts.append(pixel)
+        if len(planner_pts) >= 2:
+            cv2.polylines(img, [np.array(planner_pts, dtype=np.int32)], False, (0, 165, 255), 2)
+        elif len(planner_pts) == 1:
+            cv2.circle(img, planner_pts[0], 3, (0, 165, 255), -1)
+
+        global_goal_visible = False
+        if global_goal is not None:
+            local_xy = to_local_xy(
+                float(global_goal["x"]),
+                float(global_goal["y"]),
+                str(global_goal.get("frame_id") or ""),
+            )
+            if local_xy is not None:
+                pixel = local_xy_to_pixel(local_xy[0], local_xy[1])
+                if pixel is not None:
+                    global_goal_visible = True
+                    draw_labeled_marker(pixel, (180, 0, 180), "goal", (120, 0, 120))
+
+        short_term_target_visible = False
+        if short_term_target is not None:
+            local_xy = to_local_xy(
+                float(short_term_target["x"]),
+                float(short_term_target["y"]),
+                str(short_term_target.get("frame_id") or ""),
+            )
+            if local_xy is not None:
+                pixel = local_xy_to_pixel(local_xy[0], local_xy[1])
+                if pixel is not None:
+                    short_term_target_visible = True
+                    draw_labeled_marker(pixel, (0, 180, 0), "short", (0, 120, 0))
+
+        legend_x = 10
+        legend_y = 18
+        cv2.line(img, (legend_x, legend_y), (legend_x + 18, legend_y), (255, 0, 0), 2)
+        cv2.putText(img, "traj", (legend_x + 24, legend_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (60, 60, 60), 1, cv2.LINE_AA)
+        legend_y += 18
+        cv2.line(img, (legend_x, legend_y), (legend_x + 18, legend_y), (0, 165, 255), 2)
+        cv2.putText(img, "path", (legend_x + 24, legend_y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (60, 60, 60), 1, cv2.LINE_AA)
+        legend_y += 18
+        cv2.circle(img, (legend_x + 9, legend_y), 5, (180, 0, 180), -1)
+        cv2.putText(
+            img,
+            "goal",
+            (legend_x + 24, legend_y + 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (60, 60, 60),
+            1,
+            cv2.LINE_AA,
+        )
+        legend_y += 18
+        cv2.circle(img, (legend_x + 9, legend_y), 5, (0, 180, 0), -1)
+        cv2.putText(
+            img,
+            "short",
+            (legend_x + 24, legend_y + 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (60, 60, 60),
+            1,
+            cv2.LINE_AA,
+        )
 
         cv2.circle(img, (center, center), 6, (0, 0, 255), -1)
         heading = (int(center + 20), center)
@@ -1116,6 +1273,15 @@ class RosMcpNode(Node):
             "size_m": size_m,
             "resolution": resolution,
             "pose": pose_public,
+            "planner_path_frame_id": planner_path_frame_id,
+            "planner_path_point_count": len(planner_path),
+            "planner_path_visible_point_count": len(planner_pts),
+            "global_goal": global_goal,
+            "global_goal_visible": global_goal_visible,
+            "short_term_target": short_term_target,
+            "short_term_target_visible": short_term_target_visible,
+            "selected_target": short_term_target,
+            "selected_target_visible": short_term_target_visible,
             "ground_filter_intensity_threshold": LOCAL_MAP_GROUND_INTENSITY_THRESHOLD,
             "local_map_path": str(local_map_path),
         }
@@ -1131,7 +1297,10 @@ def build_mcp_server(ros: RosMcpNode) -> FastMCP:
 
     @server.tool(
         description=(
-            "Render a 16x16 local top-down occupancy view, with trajectory and labeled relative grid."
+            "Render a 16x16 local top-down occupancy view. "
+            "Black points are terrain obstacles, blue is the robot trajectory, "
+            "orange is the planned path, purple is the global goal, "
+            "green is the short-term goal, and red marks the robot pose."
         ),
         structured_output=False,
     )
