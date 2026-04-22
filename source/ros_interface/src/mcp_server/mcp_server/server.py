@@ -32,6 +32,8 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Empty
 from tf2_ros import Buffer, TransformListener
 
+cv2.ocl.setUseOpenCL(False)
+
 
 NAVIGATION_FRAME = "map"
 CAMERA_OPTICAL_FRAME = "camera"
@@ -51,6 +53,14 @@ CAMERA_TO_ROBOT_TRANSLATION = np.array([0.12, 0.0, 0.18], dtype=np.float64)
 CAMERA_IMAGE_WIDTH = 1600
 CAMERA_IMAGE_HEIGHT = 1200
 CAMERA_HORIZONTAL_FOV_DEG = 100.0
+CAPTURE_AROUND_SAMPLE_COUNT = 16
+CAPTURE_AROUND_DEFAULT_ANGULAR_CMD = 1.2
+CAPTURE_AROUND_DEFAULT_ROTATION_TIMEOUT_SEC = 15.0
+CAPTURE_AROUND_FRAME_TIMEOUT_SEC = 2.0
+CAPTURE_AROUND_CONTROL_PERIOD_SEC = 0.05
+CAPTURE_AROUND_START_MOTION_THRESHOLD_DEG = 1.0
+CAPTURE_AROUND_RECORDED_FRAME_LIMIT = 2000
+CAPTURE_AROUND_STITCH_SCALE = 0.5
 _ESTIMATED_CAMERA_FOCAL_PX = CAMERA_IMAGE_WIDTH / (
     2.0 * math.tan(math.radians(CAMERA_HORIZONTAL_FOV_DEG) * 0.5)
 )
@@ -84,6 +94,16 @@ def _normalize_angle(angle: float) -> float:
     while angle < -math.pi:
         angle += 2.0 * math.pi
     return angle
+
+
+def _stamp_to_sec(stamp: Any) -> float:
+    return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def _image_stamp_sec(msg: Image | None) -> float:
+    if msg is None:
+        return 0.0
+    return _stamp_to_sec(msg.header.stamp)
 
 
 def _default_data_dir() -> Path:
@@ -200,6 +220,8 @@ class RosMcpNode(Node):
         self.latest_rgb_msg: Image | None = None
         self.latest_depth_msg: Image | None = None
         self.latest_cloud: np.ndarray | None = None
+        self.rgb_recording = False
+        self.rgb_recorded_frames: list[dict[str, Any]] = []
         self.latest_reach_goal = False
         self.current_task: NavigationTask | None = None
         self.turn_cancel = threading.Event()
@@ -280,10 +302,42 @@ class RosMcpNode(Node):
     def _rgb_cb(self, msg: Image) -> None:
         with self.lock:
             self.latest_rgb_msg = msg
+            if self.rgb_recording:
+                stamp_sec = _image_stamp_sec(msg)
+                if not self.rgb_recorded_frames or stamp_sec > self.rgb_recorded_frames[-1]["stamp_sec"] + 1e-6:
+                    self.rgb_recorded_frames.append({"stamp_sec": stamp_sec, "msg": msg})
+                    if len(self.rgb_recorded_frames) > CAPTURE_AROUND_RECORDED_FRAME_LIMIT:
+                        self.rgb_recorded_frames = self.rgb_recorded_frames[-CAPTURE_AROUND_RECORDED_FRAME_LIMIT:]
 
     def _depth_cb(self, msg: Image) -> None:
         with self.lock:
             self.latest_depth_msg = msg
+
+    def _begin_rgb_recording(self) -> None:
+        with self.lock:
+            self.rgb_recorded_frames = []
+            self.rgb_recording = True
+
+    def _end_rgb_recording(self) -> list[dict[str, Any]]:
+        with self.lock:
+            frames = list(self.rgb_recorded_frames)
+            self.rgb_recorded_frames = []
+            self.rgb_recording = False
+        return frames
+
+    def _wait_for_recorded_rgb_frame(
+        self,
+        frame_count: int = 1,
+        timeout_sec: float = CAPTURE_AROUND_FRAME_TIMEOUT_SEC,
+    ) -> dict[str, Any]:
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            with self.lock:
+                if len(self.rgb_recorded_frames) >= frame_count:
+                    frame = self.rgb_recorded_frames[frame_count - 1]
+                    return {"stamp_sec": float(frame["stamp_sec"]), "msg": frame["msg"]}
+            time.sleep(0.05)
+        raise RuntimeError("Timed out waiting for a recorded RGB frame.")
 
     def _resume_autonomy_pulse(self) -> None:
         joy = Joy()
@@ -621,6 +675,281 @@ class RosMcpNode(Node):
             raise RuntimeError("Failed to encode RGB image.")
         return capture_id, encoded.tobytes(), str(rgb_path)
 
+    def _trim_capture_around_panorama(self, panorama: np.ndarray) -> np.ndarray:
+        gray = cv2.cvtColor(panorama, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
+        points = cv2.findNonZero(mask)
+        if points is None:
+            raise RuntimeError("capture_around panorama is empty after stitching.")
+        x, y, w, h = cv2.boundingRect(points)
+        return panorama[y : y + h, x : x + w]
+
+    def _align_capture_around_panorama_to_front(
+        self,
+        panorama: np.ndarray,
+        front_image: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        pano_height, pano_width = panorama.shape[:2]
+        front_height, front_width = front_image.shape[:2]
+        template_width = max(32, min(front_width, int(round(front_width * 0.45))))
+        template_height = max(32, min(front_height, int(round(front_height * 0.5))))
+        x0 = (front_width - template_width) // 2
+        y0 = (front_height - template_height) // 2
+        template = front_image[y0 : y0 + template_height, x0 : x0 + template_width]
+
+        if pano_height != front_height:
+            scaled_width = max(1, int(round(template.shape[1] * float(pano_height) / float(front_height))))
+            template = cv2.resize(template, (scaled_width, pano_height), interpolation=cv2.INTER_AREA)
+
+        if pano_width <= template.shape[1]:
+            return panorama, {"front_match_score": None, "front_match_center_x": None, "front_shift_px": 0}
+
+        pano_gray = cv2.cvtColor(panorama, cv2.COLOR_BGR2GRAY)
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        tiled = np.concatenate([pano_gray, pano_gray], axis=1)
+        result = cv2.matchTemplate(tiled, template_gray, cv2.TM_CCOEFF_NORMED)
+        _, max_value, _, max_location = cv2.minMaxLoc(result)
+        match_center_x = (float(max_location[0] % pano_width) + template.shape[1] * 0.5)
+        shift_px = int(round(pano_width * 0.5 - match_center_x))
+        aligned = np.roll(panorama, shift_px, axis=1)
+        return aligned, {
+            "front_match_score": float(max_value),
+            "front_match_center_x": float((match_center_x + shift_px) % pano_width),
+            "front_shift_px": int(shift_px),
+        }
+
+    def _capture_around_stitch_order(self, capture_count: int) -> list[int]:
+        midpoint = (capture_count + 1) // 2
+        return list(range(midpoint)) + list(range(capture_count - 1, midpoint - 1, -1))
+
+    def _draw_capture_around_heading_arrow(self, panorama: np.ndarray) -> np.ndarray:
+        annotated = panorama.copy()
+        height, width = annotated.shape[:2]
+        center_x = width // 2
+        bottom_margin = max(10, int(round(height * 0.04)))
+        arrow_height = max(28, int(round(height * 0.18)))
+        head_height = max(16, int(round(arrow_height * 0.42)))
+        shaft_half_width = max(8, int(round(width * 0.015)))
+        head_half_width = max(18, int(round(width * 0.035)))
+        base_y = min(height - 1, height - bottom_margin)
+        tip_y = max(0, base_y - arrow_height)
+        head_base_y = min(base_y - 1, tip_y + head_height)
+        arrow_points = np.array(
+            [
+                [center_x, tip_y],
+                [center_x + head_half_width, head_base_y],
+                [center_x + shaft_half_width, head_base_y],
+                [center_x + shaft_half_width, base_y],
+                [center_x - shaft_half_width, base_y],
+                [center_x - shaft_half_width, head_base_y],
+                [center_x - head_half_width, head_base_y],
+            ],
+            dtype=np.int32,
+        )
+        outline_thickness = max(2, int(round(min(width, height) * 0.006)))
+        cv2.fillPoly(annotated, [arrow_points], (0, 0, 255), lineType=cv2.LINE_AA)
+        cv2.polylines(
+            annotated,
+            [arrow_points],
+            isClosed=True,
+            color=(0, 0, 0),
+            thickness=outline_thickness,
+            lineType=cv2.LINE_AA,
+        )
+        return annotated
+
+    def _build_capture_around_panorama(
+        self,
+        captures: list[dict[str, Any]],
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        if not captures:
+            raise RuntimeError("No captures available for panorama.")
+
+        images: list[np.ndarray] = []
+        source_width: int | None = None
+        source_height: int | None = None
+        for entry in captures:
+            image = self.bridge.imgmsg_to_cv2(entry["msg"], desired_encoding="bgr8")
+            if image is None:
+                raise RuntimeError("Failed to decode a capture_around frame.")
+            if source_width is None or source_height is None:
+                source_height, source_width = image.shape[:2]
+            elif image.shape[:2] != (source_height, source_width):
+                raise RuntimeError("All capture_around images must share the same resolution.")
+            images.append(image)
+
+        assert source_width is not None and source_height is not None
+        stitch_order = self._capture_around_stitch_order(len(images))
+        ordered_images = [images[idx] for idx in stitch_order]
+        ordered_captures = [captures[idx] for idx in stitch_order]
+        stitch_inputs = [
+            cv2.resize(
+                src=image,
+                dsize=None,
+                fx=CAPTURE_AROUND_STITCH_SCALE,
+                fy=CAPTURE_AROUND_STITCH_SCALE,
+                interpolation=cv2.INTER_AREA,
+            )
+            for image in ordered_images
+        ]
+        anchor_stitch_image = stitch_inputs[0]
+
+        stitcher = cv2.Stitcher().create()
+        stitch_status, stitched_panorama = stitcher.stitch(stitch_inputs)
+        if int(stitch_status) != 0 or stitched_panorama is None or stitched_panorama.size == 0:
+            raise RuntimeError(f"capture_around stitching failed with status={int(stitch_status)}")
+
+        trimmed = self._trim_capture_around_panorama(stitched_panorama)
+        resized_height = max(1, int(round(trimmed.shape[0] * float(source_width) / float(trimmed.shape[1]))))
+        resized_panorama = cv2.resize(trimmed, (int(source_width), int(resized_height)), interpolation=cv2.INTER_AREA)
+        panorama, align_meta = self._align_capture_around_panorama_to_front(resized_panorama, anchor_stitch_image)
+        panorama = self._draw_capture_around_heading_arrow(panorama)
+
+        meta = {
+            "selected_source_stamps_sec": [float(entry["source_stamp_sec"]) for entry in captures],
+            "stitch_source_stamps_sec": [float(entry["source_stamp_sec"]) for entry in ordered_captures],
+            "stitch_input_order": [int(idx) for idx in stitch_order],
+            "source_width": int(source_width),
+            "source_height": int(source_height),
+            "raw_panorama_width": int(trimmed.shape[1]),
+            "raw_panorama_height": int(trimmed.shape[0]),
+            "panorama_width": int(panorama.shape[1]),
+            "panorama_height": int(panorama.shape[0]),
+            "front_center_x": int(round(panorama.shape[1] * 0.5)),
+            "stitch_scale": float(CAPTURE_AROUND_STITCH_SCALE),
+            "stitch_status": int(stitch_status),
+            "frame_order_prior": "first_half_forward_second_half_reverse",
+            "center_anchor_source": "sample_0_center_patch",
+        }
+        meta.update(align_meta)
+        return panorama, meta
+
+    def capture_around(
+        self,
+        rotation_timeout_sec: float = CAPTURE_AROUND_DEFAULT_ROTATION_TIMEOUT_SEC,
+    ) -> tuple[str, bytes, str, dict[str, Any]]:
+        rotation_timeout_sec = float(rotation_timeout_sec)
+        if rotation_timeout_sec <= 0.0:
+            raise RuntimeError("rotation_timeout_sec must be positive.")
+
+        with self.lock:
+            rgb_msg = self.latest_rgb_msg
+            task = self.current_task
+        if rgb_msg is None:
+            raise RuntimeError("No RGB image received yet.")
+        if task is not None and task.status == "running":
+            raise RuntimeError("Cannot run capture_around while another task is running.")
+
+        self._begin_rgb_recording()
+        recorded_frames: list[dict[str, Any]] = []
+        motion_start_stamp: float | None = None
+        motion_end_stamp: float | None = None
+        accumulated_rotation = 0.0
+        rotation_direction = 0.0
+
+        try:
+            self._wait_for_recorded_rgb_frame()
+            with self.lock:
+                pose = self.pose
+            last_pose_stamp = float(pose.stamp_sec)
+            last_yaw = float(pose.yaw)
+
+            deadline = time.time() + rotation_timeout_sec
+            while time.time() < deadline:
+                self._manual_joy(angular=CAPTURE_AROUND_DEFAULT_ANGULAR_CMD, linear=0.0)
+                with self.lock:
+                    pose = self.pose
+                if pose.stamp_sec > last_pose_stamp + 1e-6:
+                    delta_yaw = _normalize_angle(float(pose.yaw) - last_yaw)
+                    if rotation_direction == 0.0 and abs(delta_yaw) > math.radians(0.2):
+                        rotation_direction = 1.0 if delta_yaw > 0.0 else -1.0
+                    signed_delta = delta_yaw * (rotation_direction if rotation_direction != 0.0 else 1.0)
+                    if signed_delta > 0.0:
+                        accumulated_rotation += signed_delta
+                        if (
+                            motion_start_stamp is None
+                            and accumulated_rotation >= math.radians(CAPTURE_AROUND_START_MOTION_THRESHOLD_DEG)
+                        ):
+                            motion_start_stamp = float(pose.stamp_sec)
+                    last_pose_stamp = float(pose.stamp_sec)
+                    last_yaw = float(pose.yaw)
+                    if accumulated_rotation >= 2.0 * math.pi:
+                        motion_end_stamp = float(pose.stamp_sec)
+                        break
+                time.sleep(CAPTURE_AROUND_CONTROL_PERIOD_SEC)
+            else:
+                raise RuntimeError("capture_around rotation timed out before completing a full turn.")
+        finally:
+            self._manual_joy(0.0, 0.0)
+            recorded_frames = self._end_rgb_recording()
+
+        if motion_start_stamp is None or motion_end_stamp is None:
+            raise RuntimeError("Failed to measure the capture_around rotation interval.")
+
+        recorded_frames = sorted(recorded_frames, key=lambda item: item["stamp_sec"])
+        if not recorded_frames:
+            raise RuntimeError("No RGB frames were recorded during capture_around.")
+
+        motion_frames = [frame for frame in recorded_frames if frame["stamp_sec"] >= motion_start_stamp - 1e-6]
+        if not motion_frames:
+            raise RuntimeError("No RGB frames were recorded after capture_around motion started.")
+
+        rotation_duration_sec = motion_end_stamp - motion_start_stamp
+        if rotation_duration_sec <= 0.0:
+            raise RuntimeError("capture_around rotation duration must be positive.")
+
+        selected_frames = []
+        for idx in range(CAPTURE_AROUND_SAMPLE_COUNT):
+            target_stamp_sec = motion_start_stamp + rotation_duration_sec * idx / CAPTURE_AROUND_SAMPLE_COUNT
+            nearest_frame = min(motion_frames, key=lambda frame: abs(frame["stamp_sec"] - target_stamp_sec))
+            selected_frames.append(
+                {
+                    "sample_index": int(idx),
+                    "target_stamp_sec": float(target_stamp_sec),
+                    "source_stamp_sec": float(nearest_frame["stamp_sec"]),
+                    "time_error_sec": float(nearest_frame["stamp_sec"] - target_stamp_sec),
+                    "msg": nearest_frame["msg"],
+                }
+            )
+
+        panorama, panorama_meta = self._build_capture_around_panorama(selected_frames)
+        panorama_id = f"around_{uuid.uuid4().hex[:8]}"
+        panorama_path = self.capture_dir / f"{panorama_id}_panorama.png"
+        meta_path = self.capture_dir / f"{panorama_id}_panorama.json"
+        if not cv2.imwrite(str(panorama_path), panorama):
+            raise RuntimeError("Failed to save panorama image.")
+        ok, encoded = cv2.imencode(".png", panorama)
+        if not ok:
+            raise RuntimeError("Failed to encode panorama image.")
+
+        meta = {
+            "capture_id": panorama_id,
+            "type": "capture_around",
+            "panorama_path": str(panorama_path),
+            "capture_dir": str(self.capture_dir),
+            "sample_count": int(CAPTURE_AROUND_SAMPLE_COUNT),
+            "rotation_timeout_sec": float(rotation_timeout_sec),
+            "angular_cmd": float(CAPTURE_AROUND_DEFAULT_ANGULAR_CMD),
+            "motion_start_stamp_sec": float(motion_start_stamp),
+            "motion_end_stamp_sec": float(motion_end_stamp),
+            "rotation_duration_sec": float(rotation_duration_sec),
+            "rotation_direction": "positive_yaw" if rotation_direction >= 0.0 else "negative_yaw",
+            "center_is_front": False,
+            "center_is_first_sample": True,
+            "selected_frames": [
+                {
+                    "sample_index": int(entry["sample_index"]),
+                    "target_stamp_sec": float(entry["target_stamp_sec"]),
+                    "source_stamp_sec": float(entry["source_stamp_sec"]),
+                    "time_error_sec": float(entry["time_error_sec"]),
+                }
+                for entry in selected_frames
+            ],
+        }
+        meta.update(panorama_meta)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        return panorama_id, encoded.tobytes(), str(panorama_path), meta
+
     def estimate_pixel(self, capture_id: str, u: int, v: int, navigate: bool = False) -> dict[str, Any]:
         meta_path = self.capture_dir / f"{capture_id}_meta.json"
         depth_path = self.capture_dir / f"{capture_id}_depth.npy"
@@ -672,12 +1001,13 @@ class RosMcpNode(Node):
             "navigating": bool(navigate and world is not None),
         }
 
-    def render_local_map(self, size_m: float = 8.0, resolution: float = 0.05) -> tuple[bytes, dict[str, Any]]:
+    def render_local_map(self, size_m: float = 8.0, resolution: float = 0.05) -> tuple[bytes, str, dict[str, Any]]:
         with self.lock:
             cloud = None if self.latest_cloud is None else self.latest_cloud.copy()
             pose = asdict(self.pose)
             pose_public = _pose_record_from_state(self.pose)
             trajectory = list(self.pose_history)
+            capture_dir = self.capture_dir
 
         if cloud is None:
             raise RuntimeError("No point cloud received yet.")
@@ -766,7 +1096,14 @@ class RosMcpNode(Node):
         ok, encoded = cv2.imencode(".png", img)
         if not ok:
             raise RuntimeError("Failed to encode map image.")
-        return encoded.tobytes(), {"size_m": size_m, "resolution": resolution, "pose": pose_public}
+        local_map_path = capture_dir / f"local_map_{uuid.uuid4().hex[:8]}.png"
+        local_map_path.write_bytes(encoded.tobytes())
+        return encoded.tobytes(), str(local_map_path), {
+            "size_m": size_m,
+            "resolution": resolution,
+            "pose": pose_public,
+            "local_map_path": str(local_map_path),
+        }
 
 
 def build_mcp_server(ros: RosMcpNode) -> FastMCP:
@@ -782,8 +1119,10 @@ def build_mcp_server(ros: RosMcpNode) -> FastMCP:
         structured_output=False,
     )
     def render_local_map():
-        raw, meta = ros.render_local_map()
-        return [_image_content(raw), _text_content(_json_text(meta))]
+        raw, local_map_path, meta = ros.render_local_map()
+        payload = dict(meta)
+        payload["local_map_path"] = local_map_path
+        return [_image_content(raw), _text_content(_json_text(payload))]
 
     @server.tool(description="Get current pose as x, y, z, yaw_deg.")
     def get_pose() -> str:
@@ -874,6 +1213,19 @@ def build_mcp_server(ros: RosMcpNode) -> FastMCP:
     def capture_image():
         capture_id, raw, rgb_path = ros.capture_image()
         return [_image_content(raw), _text_content(_json_text({"capture_id": capture_id, "rgb_path": rgb_path}))]
+
+    @server.tool(
+        description=(
+            "Rotate in place for one full turn, capture a panorama image, "
+            "and mark the heading with an upward arrow at the lower center."
+        ),
+        structured_output=False,
+    )
+    def capture_around(rotation_timeout_sec: float = CAPTURE_AROUND_DEFAULT_ROTATION_TIMEOUT_SEC):
+        capture_id, raw, panorama_path, meta = ros.capture_around(float(rotation_timeout_sec))
+        payload = {"capture_id": capture_id, "panorama_path": panorama_path}
+        payload.update(meta)
+        return [_image_content(raw), _text_content(_json_text(payload))]
 
     @server.tool(
         description="Estimate 3D coordinates from a captured image id and pixel coordinate, and optionally navigate there."
