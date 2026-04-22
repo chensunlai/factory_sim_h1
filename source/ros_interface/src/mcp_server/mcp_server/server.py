@@ -61,6 +61,8 @@ CAPTURE_AROUND_CONTROL_PERIOD_SEC = 0.05
 CAPTURE_AROUND_START_MOTION_THRESHOLD_DEG = 1.0
 CAPTURE_AROUND_RECORDED_FRAME_LIMIT = 2000
 CAPTURE_AROUND_STITCH_SCALE = 0.5
+LOCAL_MAP_DEFAULT_SIZE_M = 16.0
+LOCAL_MAP_GROUND_INTENSITY_THRESHOLD = 0.15
 _ESTIMATED_CAMERA_FOCAL_PX = CAMERA_IMAGE_WIDTH / (
     2.0 * math.tan(math.radians(CAMERA_HORIZONTAL_FOV_DEG) * 0.5)
 )
@@ -242,7 +244,7 @@ class RosMcpNode(Node):
         self.declare_parameter("joy_topic", "/joy")
         self.declare_parameter("reach_goal_topic", "/far_reach_goal_status")
         self.declare_parameter("reset_visibility_graph_topic", "/reset_visibility_graph")
-        self.declare_parameter("scan_topic", "/registered_scan")
+        self.declare_parameter("scan_topic", "/terrain_map_ext")
         self.declare_parameter("rgb_topic", "/isaacsim/camera_torso")
         self.declare_parameter("depth_topic", "/isaacsim/depth_torso")
 
@@ -292,9 +294,17 @@ class RosMcpNode(Node):
                 self.current_task.message = "Navigation goal reached."
 
     def _cloud_cb(self, msg: PointCloud2) -> None:
+        field_names = {field.name for field in msg.fields}
         points = []
-        for p in point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
-            points.append((float(p[0]), float(p[1]), float(p[2])))
+        if "intensity" in field_names:
+            for p in point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True):
+                intensity = float(p[3])
+                if intensity <= LOCAL_MAP_GROUND_INTENSITY_THRESHOLD:
+                    continue
+                points.append((float(p[0]), float(p[1]), float(p[2])))
+        else:
+            for p in point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
+                points.append((float(p[0]), float(p[1]), float(p[2])))
         arr = np.asarray(points, dtype=np.float32) if points else np.zeros((0, 3), dtype=np.float32)
         with self.lock:
             self.latest_cloud = arr
@@ -1001,7 +1011,11 @@ class RosMcpNode(Node):
             "navigating": bool(navigate and world is not None),
         }
 
-    def render_local_map(self, size_m: float = 8.0, resolution: float = 0.05) -> tuple[bytes, str, dict[str, Any]]:
+    def render_local_map(
+        self,
+        size_m: float = LOCAL_MAP_DEFAULT_SIZE_M,
+        resolution: float = 0.05,
+    ) -> tuple[bytes, str, dict[str, Any]]:
         with self.lock:
             cloud = None if self.latest_cloud is None else self.latest_cloud.copy()
             pose = asdict(self.pose)
@@ -1064,7 +1078,7 @@ class RosMcpNode(Node):
             local_y = local_y[mask]
             px = ((local_x + half) / size_m * (side_px - 1)).astype(np.int32)
             py = ((half - local_y) / size_m * (side_px - 1)).astype(np.int32)
-            img[py, px] = (30, 30, 30)
+            img[py-1:py+1, px-1:px+1] = (30, 30, 30)
 
         pts = []
         for tx, ty in trajectory[-500:]:
@@ -1102,6 +1116,7 @@ class RosMcpNode(Node):
             "size_m": size_m,
             "resolution": resolution,
             "pose": pose_public,
+            "ground_filter_intensity_threshold": LOCAL_MAP_GROUND_INTENSITY_THRESHOLD,
             "local_map_path": str(local_map_path),
         }
 
@@ -1115,7 +1130,9 @@ def build_mcp_server(ros: RosMcpNode) -> FastMCP:
     )
 
     @server.tool(
-        description="Render an 8x8 local top-down occupancy view from point cloud with trajectory and labeled relative grid.",
+        description=(
+            "Render a 16x16 local top-down occupancy view, with trajectory and labeled relative grid."
+        ),
         structured_output=False,
     )
     def render_local_map():
