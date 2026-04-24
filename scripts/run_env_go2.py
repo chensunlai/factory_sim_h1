@@ -49,9 +49,9 @@ from factory_sim_h1.tasks.velocity.config.go2.rough_env_cfg import UnitreeGo2Rou
 
 # Fixed scene/robot paths
 ROBOT_ROOT = "/World/envs/env_0/Robot"
-ODOM_CHASSIS_PRIM = "/World/envs/env_0/Robot/torso_link"
-CAMERA_PARENT_PRIM = "/World/envs/env_0/Robot/torso_link"
-LIDAR_PARENT_PRIM = "/World/envs/env_0/Robot/torso_link"
+ODOM_CHASSIS_PRIM = "/World/envs/env_0/Robot/base"
+CAMERA_PARENT_PRIM = "/World/envs/env_0/Robot/base"
+LIDAR_PARENT_PRIM = "/World/envs/env_0/Robot/base"
 
 # Fixed ROS2 endpoints
 CMD_VEL_TOPIC = "/cmd_vel"
@@ -75,7 +75,7 @@ CAMERA_NEAR_CLIP = 0.01
 CAMERA_FAR_CLIP = 300.0
 
 LIDAR_CONFIG = "OS1_REV6_32ch10hz1024res"
-LIDAR_LOCAL_T = (0.0, 0.0, 0.48)
+LIDAR_LOCAL_T = (0.0, 0.0, 0.10)
 LIDAR_LOCAL_RPY_DEG = (0.0, 0.0, 0.0)
 
 # Fixed publication frequencies
