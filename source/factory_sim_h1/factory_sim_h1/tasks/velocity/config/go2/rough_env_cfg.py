@@ -5,7 +5,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
+from factory_sim_h1.tasks.velocity.velocity_env_cfg import LocomotionVelocityRoughEnvCfg
 
 ##
 # Pre-defined configs

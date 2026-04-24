@@ -11,8 +11,15 @@ from . import agents
 # Register Gym environments.
 ##
 
-gym.register(
-    id="Isaac-Velocity-Flat-Unitree-Go2-v0",
+
+def _safe_register(task_id: str, **kwargs):
+    """Register task only when the task ID is not already present."""
+    if task_id not in gym.registry:
+        gym.register(id=task_id, **kwargs)
+
+
+_safe_register(
+    "Isaac-Velocity-Flat-Unitree-Go2-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -22,8 +29,8 @@ gym.register(
     },
 )
 
-gym.register(
-    id="Isaac-Velocity-Flat-Unitree-Go2-Play-v0",
+_safe_register(
+    "Isaac-Velocity-Flat-Unitree-Go2-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -33,8 +40,8 @@ gym.register(
     },
 )
 
-gym.register(
-    id="Isaac-Velocity-Rough-Unitree-Go2-v0",
+_safe_register(
+    "Isaac-Velocity-Rough-Unitree-Go2-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -44,8 +51,8 @@ gym.register(
     },
 )
 
-gym.register(
-    id="Isaac-Velocity-Rough-Unitree-Go2-Play-v0",
+_safe_register(
+    "Isaac-Velocity-Rough-Unitree-Go2-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
