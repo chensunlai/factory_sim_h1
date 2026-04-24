@@ -12,7 +12,7 @@ import argparse
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="Minimal H1 runner (fixed scene/robot/topic/frame setup).")
-parser.add_argument("--checkpoint", type=str, default="weight/policy.pt", help="Path to jit policy checkpoint.")
+parser.add_argument("--checkpoint", type=str, default="weight/policy_h1.pt", help="Path to jit policy checkpoint.")
 parser.add_argument("--camera_width", type=int, default=1600, help="Camera width in pixels.")
 parser.add_argument("--camera_height", type=int, default=1200, help="Camera height in pixels.")
 parser.add_argument("--camera_hfov_deg", type=float, default=100.0, help="Camera horizontal FOV in degrees.")
@@ -43,8 +43,9 @@ from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from isaaclab_assets import H1_CFG
+from isaaclab_assets import H1_CFG, UNITREE_GO2_CFG
 from factory_sim_h1.tasks.velocity.config.h1.rough_env_cfg import H1RoughEnvCfg_PLAY
+from factory_sim_h1.tasks.velocity.config.go2.rough_env_cfg import UnitreeGo2RoughEnvCfg_PLAY
 
 # Fixed scene/robot paths
 ROBOT_ROOT = "/World/envs/env_0/Robot"
@@ -586,8 +587,12 @@ def main():
     file = io.BytesIO(memoryview(file_content).tobytes())
     policy = torch.jit.load(file, map_location=args_cli.device)
 
-    env_cfg = H1RoughEnvCfg_PLAY()
-    env_cfg.scene.robot = H1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    if "go2" in args_cli.checkpoint:
+        env_cfg = UnitreeGo2RoughEnvCfg_PLAY()
+        env_cfg.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    else:
+        env_cfg = H1RoughEnvCfg_PLAY()
+        env_cfg.scene.robot = H1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     env_cfg.scene.num_envs = 1
     env_cfg.curriculum = None
     env_cfg.scene.terrain = TerrainImporterCfg(
