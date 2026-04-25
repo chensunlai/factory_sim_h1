@@ -15,7 +15,7 @@ Every UPDATE_EVERY RGB frames a map-update cycle fires in a background thread:
     6. merge or create new objects
     7. periodic DBSCAN de-noise + filter + merge
     8. lidar snapshot fused into background occupancy (separate from objects)
-    9. save to disk under SCENE_GRAPH_SAVE_ROOT (default: ~/.tmp/cg_live)
+    9. save to disk under SCENE_GRAPH_SAVE_ROOT (default: ~/.ros/scene_graph)
 
 Requires ROS2 Jazzy sourced before running:
     source /opt/ros/jazzy/setup.bash

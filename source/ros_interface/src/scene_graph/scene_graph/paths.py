@@ -7,7 +7,7 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parent
 MODELS_DIR = PACKAGE_ROOT / "models"
 
-DEFAULT_SAVE_ROOT = Path.home() / ".tmp" / "cg_live"
+DEFAULT_SAVE_ROOT = Path.home() / ".ros" / "scene_graph"
 SAVE_ROOT = Path(os.environ.get("SCENE_GRAPH_SAVE_ROOT", DEFAULT_SAVE_ROOT)).expanduser()
 MAP_DIR = SAVE_ROOT / "map"
 MAP_PATH = MAP_DIR / "scene_map.pkl.gz"
