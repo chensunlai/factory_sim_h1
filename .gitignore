@@ -68,6 +68,7 @@ _build
 tests/
 
 docs/
+.ruff_cache/
 
 # Docker history
 .isaac-lab-docker-history

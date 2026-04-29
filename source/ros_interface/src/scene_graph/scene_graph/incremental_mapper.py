@@ -113,7 +113,7 @@ WAREHOUSE_CLASSES = [
 _CFG_DEFAULTS: dict[str, Any] = {
     "device":             DEVICE,
     "match_method":       "sim_sum",
-    "phys_bias":          0.0,
+    "phys_bias":          0.5,
     "sim_threshold":      1.5,
     "obj_min_detections": 1,
     "obj_min_points":     10,
