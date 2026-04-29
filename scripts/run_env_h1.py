@@ -47,6 +47,11 @@ from isaaclab_assets import H1_CFG, UNITREE_GO2_CFG
 from factory_sim_h1.tasks.velocity.config.h1.rough_env_cfg import H1RoughEnvCfg_PLAY
 from factory_sim_h1.tasks.velocity.config.go2.rough_env_cfg import UnitreeGo2RoughEnvCfg_PLAY
 
+# USD_PATH = f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd"
+# PLANE_PATH = f"/World/ground/"
+USD_PATH = f"data/share/InteriorAgent/kujiale_0003/kujiale_0003_plane.usda"
+PLANE_PATH = f"/World/ground/terrain/floor_plane"
+
 # Fixed scene/robot paths
 ROBOT_ROOT = "/World/envs/env_0/Robot"
 ODOM_CHASSIS_PRIM = "/World/envs/env_0/Robot/torso_link"
@@ -598,8 +603,9 @@ def main():
     env_cfg.scene.terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="usd",
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/full_warehouse.usd",
+        usd_path=USD_PATH,
     )
+    env_cfg.scene.height_scanner.mesh_prim_paths = [PLANE_PATH]
     env_cfg.sim.device = args_cli.device
     env_cfg.sim.physx.enable_ccd = True
     if env_cfg.scene.robot.spawn.articulation_props is not None:
